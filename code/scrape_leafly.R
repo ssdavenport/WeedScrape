@@ -1,21 +1,61 @@
 # scrape leafly
 
 # Start w LA County ZIP Codes
-# source("code/compile_lacounty_zipcodes.R")
-LAZIPs <- read.csv("data/LACountyZIPs.csv")[, 2]
 
+
+# Set Up ------------------------------------------------------------------
 # Direct the remote browser to the proper page.
 lf_index <- "https://www.leafly.com/finder/"
+remDr$navigate(lf_index) # used to work
+# Click "21+ years old, okay" for first time.
+# After first time, cookies makes this unnecessary
+remDr$findElement("css", "label.terms-checkbox")$clickElement()
+remDr$findElement("css", "button.terms-button")$clickElement()
 
 
 
-# Text from old leafly script ---------------------------------------------
+# Find Stores by ZIP ------------------------------------------------------
+# Get list of LA County ZIP Codes
+# source("code/compile_lacounty_zipcodes.R")
+LAZIPs <- read.csv("data/LACountyZIPs.csv")[, 2]
+# Write function to fetch Leafly store URLs by ZIP
+get_zip_store_links_leafly <- function(ZIP, delay=2) {
+  # Go to index webpage.
+  remDr$navigate(lf_index) # used to work
+  # Enter ZIP into textbox; seerch
+  textbox <- remDr$findElement("css", "location-changer form input")
+  textbox$sendKeysToElement(list(as.character(ZIP))) # type ZIP
+  textbox$sendKeysToElement(list("\uE007")) # hit enter (unicode)
+  Sys.sleep(delay) # wait
+  # Scrape sidebar links as normal.
+  zip_stores_as <- remDr$findElements("css", "ul.clearfix a.col-xs-12") # anchors
+  zip_stores_urls <- unlist(lapply(zip_stores_as, function(x) x$getElementAttribute("href")))
+  zip_stores_urls
+}
+# Deploy function to get stores for each ZIP
+# TODO: run this code.
+# WARNING: this seems to be generating different results each time; maybe duplicate?
+store_links_leafly <- LAZIPs[1:3] %>%
+  map(~get_zip_store_links_leafly(ZIP=., delay = 5)) %>%
+  unlist %>%
+  unique
+# Export / save
+write.csv(store_links_leafly, "data/leafly_store_links.csv")
 
-# This function will scrape each Leafly page, taking XML doc and outputting scraped details.
+
+
+# Scrape details per store ------------------------------------------------
+# TODO: Run this code
+# Write function to scrape details from Leafly store pages
 scrape_leafly_page <- function(page) {
   # Parse the webpage, looking for attributes
   tryCatch(
     expr = {
+      # med / rec / licensed
+      store_type_info <- page %>% html_nodes("ul.m-pills li") %>% html_text()
+      is_med <- any(str_detect(store_type_info, "Medical Dispensary"))
+      is_rec <- any(str_detect(store_type_info, "Recreational Store"))
+      is_licensed <- any(str_detect(store_type_info, "Licensed"))
       # Basic details
       body <- page %>% html_node('body')
       title_text <- page %>% html_node('head') %>% html_node('title') %>% html_text()
@@ -62,11 +102,13 @@ scrape_leafly_page <- function(page) {
   if(length(about)==0) output[['about']] <- NA
   if(!is.null(hours)) output[['hours']] <- hours
   if(length(hours)==0) output[['hours']] <- NA
+  output[['is_licensed']] <- is_licensed
+  output[['is_med']] <- is_med
+  output[['is_rec']] <- is_rec
   
   output
 }
-
-# this function will call scrape_leafly. it is just a wrapper. Range will be full automatically.
+# Write wrapper function to call page scraper safely
 apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls)) {
   output <- list()
   output$urls <- urls
@@ -80,18 +122,19 @@ apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls)) {
   }
   output
 }
+# Deploy scraper on all store pages
+store_details_lf <- store_links_leafly[4:5] %>%
+  apply_scrape_to_leafly_urls
+# Reshapee to dataframe
+stores_lf <- do.call(rbind, lapply(store_details_lf$results, data.frame))
+# Export / Save
+write.csv(stores_lf, "data/leafly_stores.csv")
 
-# Perform scraping --------------------------------------------------------
-
-# Grab the URLs for stores from the Leafly sitemap
-leafly_urls <- get_leafly_urls()
-# For each, get the XML docs and scrape detail, outputting a list.
-leafly_scrape <- leafly_urls %>% # Errors will be reported, if any.
-  apply_scrape_to_leafly_urls()
 
 
-# saveRDS(leafly_urls, 'leafly_urls.Rds')
-# leafly_scrape %>% saveRDS(paste0('leafly_urls ', todays_date, '.Rds'))
+
+
+# Text from old leafly script ---------------------------------------------
 
 
 leafly_urls_df <- leafly_scrape$results %>% 
