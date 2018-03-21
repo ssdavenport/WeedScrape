@@ -31,11 +31,11 @@ city_links <- read_csv("data/weedmaps_city_links.csv") %>%
 city_index_url <- city_links[7]
 # Write function that extracts store links from a city index page (Weedmaps)
 # It collects medical and rec stores by default, or can be set to rec only
-get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = FALSE) {
+get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = FALSE, delay = 1) {
   
   # Grab all unique dispensary URLs in sidebar
   remDr$navigate(city_index_url) # Get Page Source
-  source <- read_html(remDr$getPageSource() %>% unlist) 
+  Sys.sleep(delay)
   remDr$screenshot(display = screenshot)
   
   # If looking for recreational only, then click the rec button.
@@ -43,13 +43,16 @@ get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = 
   if (rec_only) {
     # Click filter screen
     remDr$findElement("css", "#filters-modal-button.wm-filter-button")$clickElement()
+    Sys.sleep(delay)
     # Click on the medical toggle button (this will turn medical off)
     remDr$findElement("css", "div.wm-filter-modal-toggle-control span")$clickElement()
+    Sys.sleep(delay)
     # Click on the "okay" ("See n Results") Button to keep changes
     remDr$findElement("css", "ion-footer-bar span")$clickElement()
     }
   
   # Extract store links (sometimes produces 0-length output, if no stores there)
+  source <- read_html(remDr$getPageSource() %>% unlist) 
   store_links <- source %>% 
     xml_find_all('//*[@data-ng-switch-default]') %>%
     html_nodes("a") %>%
@@ -59,9 +62,10 @@ get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = 
   store_links
 }
 
-# Deploy function for each store, combining results.
+
+# Get details for all stores (med/rec), deploying function for each.
 all_store_links <- city_links %>%
-  map(get_city_store_links(rec_only = FALSE)) %>% 
+  map(~get_city_store_links(city_index_url = ., rec_only = FALSE, delay = 0.5)) %>% 
   unlist %>% 
   unique
 # Add link prefix and details page suffix (which can be static-ly scraped)
@@ -69,14 +73,17 @@ all_store_links <- paste0("https://weedmaps.com", all_store_links, "#/details")
 # Save
 write.csv(all_store_links, "data/weedmaps_store_links.csv"); beepr::beep(5)
 
+
 # Repeat the above step, this time for recreational only
 # TODO: Run this step some time.
+proc.time()
 city_links %>%
-  map(get_city_store_links(rec_only = TRUE)) %>% 
+  map(~get_city_store_links(city_index_url = ., rec_only = TRUE, delay=1, screenshot=TRUE)) %>% 
   unlist %>% 
   unique %>%
   paste0("https://weedmaps.com", ., "#/details") %>% 
   write.csv("data/weedmaps_store_links_rec.csv")
+proc.time()
 
 
 # Scrape store info from store URLs ---------------------------------------
@@ -149,7 +156,7 @@ stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>%
 # Export/Save
 # Note: File still has quasi-duplicates
 write.csv(stores_wm, "output/store_details_wm.csv")
-stores_wm %>% arrange(name) %>% View
+
 
 # TODO: Repeat this code for the rec only dataset.
 
