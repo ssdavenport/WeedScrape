@@ -63,7 +63,7 @@ get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = 
 }
 
 
-# Get details for all stores (med/rec), deploying function for each.
+# Get details for all stores (med/rec), deploying function for each (gives 1003 links)
 all_store_links <- city_links %>%
   map(~get_city_store_links(city_index_url = ., rec_only = FALSE, delay = 0.5)) %>% 
   unlist %>% 
@@ -74,9 +74,7 @@ all_store_links <- paste0("https://weedmaps.com", all_store_links, "#/details")
 write.csv(all_store_links, "data/weedmaps_store_links.csv"); beepr::beep(5)
 
 
-# Repeat the above step, this time for recreational only
-# TODO: Run this step some time.
-proc.time()
+# Repeat the above step, this time for recreational only (gives 148 links)
 city_links %>%
   map(~get_city_store_links(city_index_url = ., rec_only = TRUE, delay=1, screenshot=TRUE)) %>% 
   unlist %>% 
@@ -158,7 +156,17 @@ stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>%
 write.csv(stores_wm, "output/store_details_wm.csv")
 
 
-# TODO: Repeat this code for the rec only dataset.
+# Repeat this code for the rec only dataset.
+stores_wm_rec <- read_csv("data/weedmaps_store_links_rec.csv") %>% 
+  select(-X1) %>% 
+  unlist %>%
+  map(get_store_details_wm)
+# Export
+do.call(rbind, lapply(stores_wm_rec, data.frame)) %>% 
+  mutate(name = str_replace_all(name, ".* Dispensary -", ""),
+         state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
+  filter(state != "AZ") %>%
+  write.csv("output/store_details_wm_rec.csv")
 
 
 

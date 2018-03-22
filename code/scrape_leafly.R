@@ -1,18 +1,26 @@
 # scrape leafly
-
+source("code/functions.R")
+library(rvest)
+library(tidyverse)
 # Start w LA County ZIP Codes
 
-
 # Set Up ------------------------------------------------------------------
+source("code/start_remote_driver.R")
 # Direct the remote browser to the proper page.
 lf_index <- "https://www.leafly.com/finder/"
 remDr$navigate(lf_index) # used to work
+remDr$screenshot(T)
 # Click "21+ years old, okay" for first time.
 # After first time, cookies makes this unnecessary
-remDr$findElement("css", "label.terms-checkbox")$clickElement()
-remDr$findElement("css", "button.terms-button")$clickElement()
+# Are you eligible to visit? (21+ years old)
+remDr$findElement("css", "input#eligibility-tou-confirm")$clickElement() # click old enough
+remDr$findElement("css", "button#tou-continue")$clickElement() # click old enough
+# Would you sign up for the newsletter?
+# remDr$findElement("css", "label.terms-checkbox")$clickElement() # click old enough (broken?)
+# remDr$findElement("css", "label.terms-checkbox")$clickElement() # click checkbox?
+# remDr$findElement("css", "button.terms-button")$clickElement() # click continue
 
-
+remDr$getCurrentUrl()
 
 # Find Stores by ZIP ------------------------------------------------------
 # Get list of LA County ZIP Codes
@@ -21,27 +29,37 @@ LAZIPs <- read.csv("data/LACountyZIPs.csv")[, 2]
 # Write function to fetch Leafly store URLs by ZIP
 get_zip_store_links_leafly <- function(ZIP, delay=2) {
   # Go to index webpage.
-  remDr$navigate(lf_index) # used to work
+  remDr$navigate(lf_index) 
+  Sys.sleep(delay) 
   # Enter ZIP into textbox; seerch
   textbox <- remDr$findElement("css", "location-changer form input")
   textbox$sendKeysToElement(list(as.character(ZIP))) # type ZIP
   textbox$sendKeysToElement(list("\uE007")) # hit enter (unicode)
-  Sys.sleep(delay) # wait
+  Sys.sleep(delay)
   # Scrape sidebar links as normal.
   zip_stores_as <- remDr$findElements("css", "ul.clearfix a.col-xs-12") # anchors
   zip_stores_urls <- unlist(lapply(zip_stores_as, function(x) x$getElementAttribute("href")))
+  Sys.sleep(delay/2)
   zip_stores_urls
 }
 # Deploy function to get stores for each ZIP
 # TODO: run this code.
 # WARNING: this seems to be generating different results each time; maybe duplicate?
-store_links_leafly <- LAZIPs[1:3] %>%
+proc.time()
+store_links_leafly <- LAZIPs %>%
   map(~get_zip_store_links_leafly(ZIP=., delay = 5)) %>%
   unlist %>%
   unique
+
+# store_links_leafly
+# store_links_leafly
+# remDr$screenshot(T)
+# get_zip_store_links_leafly(LAZIPs[1])
+# undebug(get_zip_store_links_leafly)
+
 # Export / save
 write.csv(store_links_leafly, "data/leafly_store_links.csv")
-
+proc.time()
 
 
 # Scrape details per store ------------------------------------------------
@@ -52,7 +70,8 @@ scrape_leafly_page <- function(page) {
   tryCatch(
     expr = {
       # med / rec / licensed
-      store_type_info <- page %>% html_nodes("ul.m-pills li") %>% html_text()
+      store_type_info <- page %>% html_nodes("ul li") %>% html_text()
+      # store_type_info <- page %>% html_nodes("ul.m-pills li") %>% html_text()
       is_med <- any(str_detect(store_type_info, "Medical Dispensary"))
       is_rec <- any(str_detect(store_type_info, "Recreational Store"))
       is_licensed <- any(str_detect(store_type_info, "Licensed"))
@@ -122,14 +141,30 @@ apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls)) {
   }
   output
 }
+proc.time()
 # Deploy scraper on all store pages
-store_details_lf <- store_links_leafly[4:5] %>%
-  apply_scrape_to_leafly_urls
-# Reshapee to dataframe
-stores_lf <- do.call(rbind, lapply(store_details_lf$results, data.frame))
-# Export / Save
-write.csv(stores_lf, "data/leafly_stores.csv")
+store_details_lf <- vector(mode='list', length(store_links_leafly))
+for (store_url in seq_along(store_links_leafly)) {
+  # webpage <- read_html_safely(store_links_leafly[store_url])
+  # store_details_lf[[store_url]] <- scrape_leafly_page(webpage)
+  for (colnames in names(store_details_lf[[store_url]])) {
+    store_details_lf[[store_url]][[colnames]] <- ifelse(
+      length(store_details_lf[[store_url]][[colnames]]) != 0, 
+      store_details_lf[[store_url]][[colnames]], NA)
+  }
+}
 
+# Reshape to dataframe
+stores_lf <- do.call(rbind, lapply(store_details_lf, data.frame))
+container <- list()
+for (store_url in seq_along(store_details_lf)) {
+  # Make a new list, one entry has a dataframe each
+  container[[store_url]] <- data.frame(store_details_lf[store_url])
+}
+stores_lf_df <- bind_rows(container)
+# Export / Save
+write.csv(stores_lf_df, "data/leafly_stores.csv")
+proc.time()
 
 
 
