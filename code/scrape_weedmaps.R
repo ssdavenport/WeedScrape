@@ -10,7 +10,7 @@ source("code/start_remote_driver.R")
 wm_index <- "https://weedmaps.com/dispensaries/in/united-states/california"
 remDr$navigate(wm_index) # used to work
 remDr$screenshot(display = TRUE)
-wm_index_html <- read_html(remDr$getPageSource() %>% unlist)
+wm_index_html <- read_html_safely(remDr$getPageSource() %>% unlist)
 
 
 
@@ -52,7 +52,7 @@ get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = 
     }
   
   # Extract store links (sometimes produces 0-length output, if no stores there)
-  source <- read_html(remDr$getPageSource() %>% unlist) 
+  source <- read_html_safely(remDr$getPageSource() %>% unlist) 
   store_links <- source %>% 
     xml_find_all('//*[@data-ng-switch-default]') %>%
     html_nodes("a") %>%
@@ -90,9 +90,10 @@ store_links <- read_csv("data/weedmaps_store_links.csv") %>%
 # Write function that extracts key info from store page (Weedmaps)
 get_store_details_wm <- function(store_url) {
   
-  html_page <- read_html(store_url)
+  html_page <- read_html_safely(store_url)
   
-  # Grab fields from the HTML page.
+  # Grab fields from the "Details" page.
+  url <- store_url
   state <- html_page %>% html_node("body") %>% html_nodes("[itemprop=addressRegion]") %>% html_text()
   licenses <- html_page %>% html_node("body") %>% html_nodes("div .details-licenses") %>% html_text() %>% 
     str_c(collapse=" ")
@@ -119,13 +120,26 @@ get_store_details_wm <- function(store_url) {
     str_replace_all(",", "") %>% as.numeric
   description <- html_page %>% html_nodes("div .details-body") %>% html_text() %>% str_c(collapse = "<break>")
   hours <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>% str_subset("Sunday")
-  url <- store_url
+  
+  # Grab fields from the "reviews" page
+  review_url <- str_replace(store_url, "#/details", "#/reviews")
+  review_page <- read_html_safely(review_url)
+  # Grab latest review date
+  latest_review_date <- review_page %>% 
+    html_nodes(".created-at .timeago_standard_date") %>% 
+    html_attr("title")
+  # In case no dates, and we've found a null object, fill w NA
+  if(is.null(latest_review_date)) latest_review_date <- NA 
+  latest_review_date <- as.Date(latest_review_date) %>%
+    max # get latest date
   
   # Format the output.
   features <- c('state', 'name', 'address', 'city', 'ZIP', 'phone', 'phone2', 'email', 'email2', 'membersince',
-                'hits', 'twitter', 'instagram', 'facebook', 'website', 'reviews', 'description', 'hours', "url", "licenses")
+                'hits', 'twitter', 'instagram', 'facebook', 'website', 'reviews', 'description', 'hours', "url", "licenses",
+                'latest_review_date')
   out <- list(state, name, address, city, ZIP, phone, phone2, email, email2, membersince,
-              hits, twitter, instagram, facebook, website, reviews, description, hours, url, licenses)
+              hits, twitter, instagram, facebook, website, reviews, description, hours, url, licenses,
+              latest_review_date)
   names(out) = features
   
   # Testing.
@@ -148,7 +162,7 @@ get_store_details_wm <- function(store_url) {
 
 # Deploy on each store page.
 all_store_details <- store_links %>%
-  map(get_store_details_wm)
+  map(get_store_details_wm) # This recently crashed due to a 504 error 
 # Transform to dataframe, adding URL columns, cleaning
 stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>% 
   mutate(name = str_replace_all(name, ".* Dispensary -", ""),
@@ -159,16 +173,16 @@ stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>%
 write.csv(stores_wm, "output/store_details_wm.csv")
 
 
-# Repeat this code for the rec only dataset (prob unnecessary as they were all found in the other list).
-stores_wm_rec <- read_csv("data/weedmaps_store_links_rec.csv") %>% 
-  select(-X1) %>% 
-  unlist %>% #`[`(1:3) %>%
-  map(get_store_details_wm)
-# Export
-do.call(rbind, lapply(stores_wm_rec, data.frame)) %>% 
-  mutate(name = str_replace_all(name, ".* Dispensary -", ""),
-         state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
-  filter(state != "AZ") %>%
-  write.csv("output/store_details_wm_rec.csv")
-beepr::beep(6)
+# # Repeat this code for the rec only dataset (prob unnecessary as they were all found in the other list).
+# stores_wm_rec <- read_csv("data/weedmaps_store_links_rec.csv") %>% 
+#   select(-X1) %>% 
+#   unlist %>% #`[`(1:3) %>%
+#   map(get_store_details_wm)
+# # Export
+# do.call(rbind, lapply(stores_wm_rec, data.frame)) %>% 
+#   mutate(name = str_replace_all(name, ".* Dispensary -", ""),
+#          state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
+#   filter(state != "AZ") %>%
+#   write.csv("output/store_details_wm_rec.csv")
+# beepr::beep(6)
 
