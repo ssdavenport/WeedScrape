@@ -54,7 +54,7 @@ wm_stores <- tibble(url=wm_urls) %>%
   mutate(type = ifelse(url %in% wm_r$url, "Rec or Med/Rec only",
                        ifelse(url %in% wm_all$url, "Med Only", "Unknown"))) %>%
   left_join(wm_all) %>% 
-  # Detect if ZIP is in LA County, extract med/rec license #
+  # Detect if ZIP is in LA County, extract med/rec license #  
   mutate(LACounty_ZIP = ZIP %in% LAZIPs,
          med_license = str_extract(description, "M[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"),
          rec_license = str_extract(description, "A[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"))
@@ -65,3 +65,5 @@ wm_stores %>% filter(LACounty_ZIP) %>% .$med_license %>% unlist %>% table
 wm_stores %>% filter(LACounty_ZIP) %>% .$rec_license %>% unlist %>% table
 # Save/Export
 write.csv(wm_stores, "wm_stores_cleaned.csv")
+
+# NOTE: Try to find date of most recent review?
