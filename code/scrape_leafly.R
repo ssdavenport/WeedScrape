@@ -36,6 +36,13 @@ get_zip_store_links_leafly <- function(ZIP, delay=2) {
   textbox$sendKeysToElement(list(as.character(ZIP))) # type ZIP
   textbox$sendKeysToElement(list("\uE007")) # hit enter (unicode)
   Sys.sleep(delay)
+  # Zoom out! (not implemented, but would find potentially find more stores)
+  # zoom_out_button <- remDr$findElement("css", "button[type^='Zoom out']")
+  # zoom_out_button$clickElement() # Zoom out once
+  # Sys.sleep(.25)
+  # zoom_out_button$clickElement() # Zoom out again
+  # Sys.sleep(.25)
+  
   # Scrape sidebar links as normal.
   zip_stores_as <- remDr$findElements("css", "ul.clearfix a.col-xs-12") # anchors
   zip_stores_urls <- unlist(lapply(zip_stores_as, function(x) x$getElementAttribute("href")))
@@ -61,6 +68,7 @@ store_links_leafly <- LAZIPs %>%
 write.csv(store_links_leafly, "data/leafly_store_links.csv")
 proc.time()
 
+store_links_leafly <- read.csv("data/leafly_store_links.csv")
 
 # Scrape details per store ------------------------------------------------
 # TODO: Run this code
@@ -124,7 +132,8 @@ scrape_leafly_page <- function(page) {
   output[['is_licensed']] <- is_licensed
   output[['is_med']] <- is_med
   output[['is_rec']] <- is_rec
-  
+  if(!is.null(title_text)) output[['title_text']] <- title_text
+  if(is.null(title_text)) output[['title_text']] <- NA
   output
 }
 # Write wrapper function to call page scraper safely
@@ -162,6 +171,9 @@ for (store_url in seq_along(store_details_lf)) {
   container[[store_url]] <- data.frame(store_details_lf[store_url])
 }
 stores_lf_df <- bind_rows(container)
+# Add URL
+stores_lf_df <- stores_lf_df %>% 
+  mutate(url = store_links_leafly$x)
 # Export / Save
 write.csv(stores_lf_df, "data/leafly_stores.csv")
 proc.time()

@@ -2,7 +2,7 @@
 library(tidyverse)
 library(rvest)
 library(testthat)
-
+source('code/functions.R')
 
 # Direct remote driver to index page --------------------------------------
 # docker run -d -p 4445:4444 selenium/standalone-firefox:2.53.0
@@ -94,6 +94,8 @@ get_store_details_wm <- function(store_url) {
   
   # Grab fields from the HTML page.
   state <- html_page %>% html_node("body") %>% html_nodes("[itemprop=addressRegion]") %>% html_text()
+  licenses <- html_page %>% html_node("body") %>% html_nodes("div .details-licenses") %>% html_text() %>% 
+    str_c(collapse=" ")
   name <- html_page %>% html_nodes(".listing-subtitle") %>% html_text() %>% head(1)
   address <- html_page %>% html_nodes("[itemprop=streetAddress]") %>% html_text()
   city <- html_page %>% html_nodes("[itemprop=addressLocality]") %>% html_text()
@@ -117,12 +119,13 @@ get_store_details_wm <- function(store_url) {
     str_replace_all(",", "") %>% as.numeric
   description <- html_page %>% html_nodes("div .details-body") %>% html_text() %>% str_c(collapse = "<break>")
   hours <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>% str_subset("Sunday")
+  url <- store_url
   
   # Format the output.
   features <- c('state', 'name', 'address', 'city', 'ZIP', 'phone', 'phone2', 'email', 'email2', 'membersince',
-                'hits', 'twitter', 'instagram', 'facebook', 'website', 'reviews', 'description', 'hours')
+                'hits', 'twitter', 'instagram', 'facebook', 'website', 'reviews', 'description', 'hours', "url", "licenses")
   out <- list(state, name, address, city, ZIP, phone, phone2, email, email2, membersince,
-              hits, twitter, instagram, facebook, website, reviews, description, hours)
+              hits, twitter, instagram, facebook, website, reviews, description, hours, url, licenses)
   names(out) = features
   
   # Testing.
@@ -142,13 +145,13 @@ get_store_details_wm <- function(store_url) {
   # Output store details
   out
 }
+
 # Deploy on each store page.
 all_store_details <- store_links %>%
   map(get_store_details_wm)
 # Transform to dataframe, adding URL columns, cleaning
 stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>% 
-  mutate(url = store_links,
-         name = str_replace_all(name, ".* Dispensary -", ""),
+  mutate(name = str_replace_all(name, ".* Dispensary -", ""),
          state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
   filter(state != "AZ")
 # Export/Save
@@ -156,10 +159,10 @@ stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>%
 write.csv(stores_wm, "output/store_details_wm.csv")
 
 
-# Repeat this code for the rec only dataset.
+# Repeat this code for the rec only dataset (prob unnecessary as they were all found in the other list).
 stores_wm_rec <- read_csv("data/weedmaps_store_links_rec.csv") %>% 
   select(-X1) %>% 
-  unlist %>%
+  unlist %>% #`[`(1:3) %>%
   map(get_store_details_wm)
 # Export
 do.call(rbind, lapply(stores_wm_rec, data.frame)) %>% 
@@ -167,35 +170,5 @@ do.call(rbind, lapply(stores_wm_rec, data.frame)) %>%
          state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
   filter(state != "AZ") %>%
   write.csv("output/store_details_wm_rec.csv")
+beepr::beep(6)
 
-
-
-# OLD STUFF ---------------------------------------------------------------
-# This function gets called by scrape_wm_reviews. It stops a dead website from breaking the whole loop.
-tryWebAction <- function(action, url=NA, name='generic') {
-  tryCatch(expr = action,
-           error = function(e) {
-             message(paste0('the web action ', name, ' did not work at URL: ', url))
-             do_over <- tryCatch(
-               expr = {
-                 Sys.sleep(2)
-                 action
-               },
-               error = function(e) {
-                 message(paste0('the web action ', name, 'failed on second try at URL: ', url))
-               })
-             return(do_over)
-           })
-}
-
-
-# Perform dynamic scraping (for review dates) -----------------------------
-for (i in 4001:4482) {#4482
-  # Cycle throough HTMLs, getting details. Pause every once in awhile and print status indicator.
-  weedmaps_url_html_list2$reviews[[i]] <- 
-    tryCatch( 
-      expr = {scrape_wm_reviews(weedmaps_url_html_list2$urls[[i]], wait_time = 1)},
-      error = function(e) scrape_wm_reviews(weedmaps_url_html_list2$urls[[i]], wait_time = 5, quiet = F)
-    )
-  if (i%%5==0) Sys.sleep(5);if (i%%10==0) print(i)  # bonus pause and status indicators.
-}
