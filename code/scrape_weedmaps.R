@@ -169,4 +169,3 @@ stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>%
 # Export/Save
 # Note: File still has quasi-duplicates
 write.csv(stores_wm, "output/store_details_wm.csv")
-
