@@ -26,6 +26,7 @@ write.csv(city_links, "data/weedmaps_city_links.csv")
 
 
 # Scrape Store URLs, iterating through city index URLs --------------------
+
 city_links <- read_csv("data/weedmaps_city_links.csv") %>% 
   select(-X1) %>% unlist # drop empty column
 city_index_url <- city_links[7]
@@ -83,8 +84,10 @@ proc.time()
 
 
 # Scrape store info from store URLs ---------------------------------------
+
 store_links <- read_csv("data/weedmaps_store_links.csv") %>% 
   select(-X1) %>% unlist
+
 # Write function that extracts key info from store page (Weedmaps)
 get_store_details_wm <- function(store_url) {
   
@@ -118,7 +121,11 @@ get_store_details_wm <- function(store_url) {
     str_replace_all(",", "") %>% as.numeric
   description <- html_page %>% html_nodes("div .details-body") %>% html_text() %>% str_c(collapse = "<break>")
   hours <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>% str_subset("Sunday")
-  
+  age18 <- html_page %>% html_nodes("div.icon_age_18")
+  age21 <- html_page %>% html_nodes("div.icon_age_21")
+  min_age <- case_when(length(age18) != 0 ~ "18+",
+                      length(age21) != 0 ~ "21+")
+
   # Grab fields from the "reviews" page
   review_url <- str_replace(store_url, "#/details", "#/reviews")
   review_page <- read_html_safely(review_url)
@@ -132,12 +139,14 @@ get_store_details_wm <- function(store_url) {
     max # get latest date
   
   # Format the output.
-  features <- c('state', 'name', 'address', 'city', 'ZIP', 'phone', 'phone2', 'email', 'email2', 'membersince',
-                'hits', 'twitter', 'instagram', 'facebook', 'website', 'reviews', 'description', 'hours', "url", "licenses",
-                'latest_review_date')
+  features <- c('state', 'name', 'address', 'city', 'ZIP', 'phone', 'phone2', 
+                'email', 'email2', 'membersince','hits', 'twitter', 'instagram', 
+                'facebook', 'website', 'reviews', 'description', 'hours', "url",
+                "licenses",
+                'latest_review_date', 'min_age')
   out <- list(state, name, address, city, ZIP, phone, phone2, email, email2, membersince,
               hits, twitter, instagram, facebook, website, reviews, description, hours, url, licenses,
-              latest_review_date)
+              latest_review_date, min_age)
   names(out) = features
   
   # Testing.
@@ -161,11 +170,15 @@ get_store_details_wm <- function(store_url) {
 # Deploy on each store page.
 all_store_details <- store_links %>%
   map(get_store_details_wm) # This recently crashed due to a 504 error 
+
 # Transform to dataframe, adding URL columns, cleaning
 stores_wm <- do.call(rbind, lapply(all_store_details, data.frame)) %>% 
   mutate(name = str_replace_all(name, ".* Dispensary -", ""),
          state = str_replace_all(state, ".*(?i)CA.*", "CA")) %>%
   filter(state != "AZ")
+
 # Export/Save
 # Note: File still has quasi-duplicates
-write.csv(stores_wm, "output/store_details_wm.csv")
+write.csv(stores_wm, "data/store_details_wm.csv")
+
+beepr::beep(5)

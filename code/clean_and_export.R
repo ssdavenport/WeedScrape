@@ -10,8 +10,13 @@ source("code/functions.R")
 # Leafly ------------------------------------------------------------------
 # Load, identify stores removed BC unlicensed
 lf <- read.csv("data/leafly_stores.csv") %>% 
-  select(-X, -X.1) %>%
+  select(-X) %>%
   mutate(rmvd_unlicensed =  !is_med & !is_rec & is.na(city),
+         name = as.character(name),
+         name = str_replace_all(name, "[\n]", ""),
+         name = str_replace_all(name, " {2,}", " "),
+         name = str_replace_all(name, "^ *", ""),
+         name = str_replace_all(name, "Home Dispensaries", ""),
          type = case_when(is_med & is_rec ~ "Rec/Med",
                           is_med & !is_rec ~ "Med",
                           !is_med & is_rec ~ "Rec",
@@ -40,11 +45,46 @@ table(lf$type_imputed) # Licenses by best guess @ type
 #TODO: Add columns for medical/adult-use license IDs
 
 
+lf <- lf %>% 
+  mutate(recent_review_date = as.Date(recent_review_date),
+         address = as.character(address)) %>%
+  rowwise %>%
+  mutate(med_license = ifelse(is.null(med_license), NA, med_license),
+         rec_license = ifelse(is.null(rec_license), NA, rec_license),
+         last_active = max(recent_review_date, menu_updated_date)) %>%
+  ungroup %>%
+  mutate(days_inactive = max(last_active, na.rm=T) - last_active,
+         address = ifelse(nchar(address) < 5 | is.na(address), "Call for address", address),
+         address = tools::toTitleCase(tolower(address))
+  )
+
+lf <- lf %>%
+  select(Name = name, URL=url, City=city, Address=address, Phone=phone,
+         Days_Inactive=days_inactive, Joined=joined_date, 
+         Menu_Updated = menu_updated_date, 
+         Recent_Review_Date = recent_review_date,
+         Type=type,
+         About=about, Web=web,
+         Med_License=med_license,
+         Rec_License=rec_license,
+         type, 
+         is_licensed, is_med, is_rec, rmvd_unlicensed, 
+         type_imputed,
+         Recent_Review = recent_review_content)
+
+
+lf %>% 
+  mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower) %>%
+  write.csv("output/Leafly_cleaned.csv")
+
+
+
 # WeedMaps ----------------------------------------------------------------
+
 # Load Data
 LAZIPs <- read.csv("data/LACountyZIPs.csv")[, 2] # ZIPs
-wm_r <- read.csv("output/store_details_wm_rec.csv") %>% select(-X) #%>%
-wm_all <- read.csv("output/store_details_wm.csv") %>% select(-X) #%>%
+wm_r <- read.csv("data/store_details_wm_rec.csv") %>% select(-X) #%>%
+wm_all <- read.csv("data/store_details_wm.csv") %>% select(-X) #%>%
 # Check if there are any rec stores that did not appear in med/rec search
 any(!(wm_r$url %in% wm_all$url)) # any left out? should resolve to FALSE
 # Get a list of ALL the urls (med or rec), and tag them acc'g to group
@@ -57,15 +97,17 @@ wm_stores <- tibble(url=wm_urls) %>%
   # Detect if ZIP is in LA County, extract med/rec license #  
   mutate(LACounty_ZIP = ZIP %in% LAZIPs,
          med_license = str_extract(description, "M[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"),
-         rec_license = str_extract(description, "A[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"))
+         rec_license = str_extract(description, "A[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"),
+         latest_review_date = as.Date(latest_review_date))
 # Diagnose
 sapply(wm_stores, function(x) mean(is.na(x)))
 wm_stores %>% filter(LACounty_ZIP) %>% .$type %>% table
 wm_stores %>% filter(LACounty_ZIP) %>% .$med_license %>% unlist %>% table
 wm_stores %>% filter(LACounty_ZIP) %>% .$rec_license %>% unlist %>% table
 
+
 wm_stores <- wm_stores %>% 
-  mutate(days_inactive= max(as.Date(latest_review_date)) - as.Date(latest_review_date),
+  mutate(days_inactive= max(as.Date(latest_review_date), na.rm=T) - as.Date(latest_review_date),
          address = as.character(address),
          address = ifelse(nchar(address) < 5 | is.na(address), "Call for Address", address),
          address = tools::toTitleCase(tolower(address))) %>%
@@ -74,58 +116,26 @@ wm_stores <- wm_stores %>%
          Phone=phone, Email=email,
          Days_Inactive=days_inactive, Joined=membersince,
          Reviews=reviews,
+         Min_Age = min_age,
          Med_License=med_license, Rec_License=rec_license,
          Twitter=twitter, IG=instagram, FB=facebook, Website=website,
          Phone2=phone2, Email2=email2, Hits=hits,
          About=description) 
+
 
 wm_stores <- wm_stores %>% 
   mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower,
          About = str_replace_all(About, "<break>", " "),
          About = iconv(About, to = "ASCII//TRANSLIT"), 
          Name = iconv(Name, to = "ASCII//TRANSLIT"), 
-         About = ifelse(nchar(About) < 5 | is.na(About), " ", About))
+         About = ifelse(nchar(About) < 5 | is.na(About), " ", About),
+         Med = str_detect(About, "(?i)medical"),
+         Rec = str_detect(About, "(?i)recreational") | 
+           str_detect(About, "(?i)adult[\\- ]use"))
 
-wm_stores[is.na(wm_stores)] <- " "
 
-head(wm_stores)
 # Save/Export
 write.csv(wm_stores, "output/Weedmaps_cleaned.csv")
 
          
 # NOTE: Try to find date of most recent review?
-
-# More --------------------------------------------------------------------
-
-lf <- lf %>% 
-  mutate(recent_review_date = as.Date(recent_review_date),
-         address = as.character(address)) %>%
-  rowwise %>%
-  mutate(med_license = ifelse(is.null(med_license), NA, med_license),
-         rec_license = ifelse(is.null(rec_license), NA, rec_license),
-         last_active = max(recent_review_date, menu_updated_date)) %>%
-  ungroup %>%
-  mutate(days_inactive = max(last_active, na.rm=T) - last_active,
-         address = ifelse(nchar(address) < 5 | is.na(address), "Call for address", address),
-         address = tools::toTitleCase(tolower(address))
-         )
-
-lf <- lf %>%
-  select(URL=url, City=city, Address=address, Phone=phone,
-         Days_Inactive=days_inactive, Joined=joined_date, 
-         About=about, Web=web, #hours, 
-         Type=type,
-         Med_License=med_license,
-         Rec_License=rec_license) 
-
-lf %>% 
-  mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower) %>%
-  write.csv("output/Leafly_cleaned.csv")
-
-              # about = str_replace(about, "[^[:alnum:]]", "[^a-zA-Z0-9]"))          %>%
-  .$about %>% head
-
-lf$about %>% head
-
-         
-

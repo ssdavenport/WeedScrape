@@ -68,7 +68,8 @@ store_links_leafly <- LAZIPs %>%
 write.csv(store_links_leafly, "data/leafly_store_links.csv")
 proc.time()
 
-store_links_leafly <- read.csv("data/leafly_store_links.csv")
+store_links_leafly <- read.csv("data/leafly_store_links.csv") %>%
+  select(-X) %>% unlist
 
 # Scrape details per store ------------------------------------------------
 # TODO: Run this code
@@ -79,6 +80,10 @@ scrape_leafly_page <- function(page) {
     expr = {
       # med / rec / licensed
       store_type_info <- page %>% html_nodes("ul li") %>% html_text()
+      # Name
+      name <- page %>% html_nodes("div.site-actions-breadcrumbs") 
+      name <- ifelse(is.null(name), NA, name %>% html_text() %>% str_replace("Home Dispensaries ", ""))
+      
       # store_type_info <- page %>% html_nodes("ul.m-pills li") %>% html_text()
       is_med <- any(str_detect(store_type_info, "Medical Dispensary"))
       is_rec <- any(str_detect(store_type_info, "Recreational Store"))
@@ -124,6 +129,7 @@ scrape_leafly_page <- function(page) {
   if(!is.null(recent_review_date)) output[['recent_review_date']] <- recent_review_date
   if(!is.null(recent_review_content)) output[['recent_review_content']] <- recent_review_content
   if(!is.null(web)) output[['web']] <- web
+  if(!is.null(name)) output[['name']] <- name
   if(length(web)==0) output[['web']] <- NA
   if(!is.null(about)) output[['about']] <- about
   if(length(about)==0) output[['about']] <- NA
@@ -136,6 +142,7 @@ scrape_leafly_page <- function(page) {
   if(is.null(title_text)) output[['title_text']] <- NA
   output
 }
+
 # Write wrapper function to call page scraper safely
 apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls)) {
   output <- list()
@@ -150,66 +157,39 @@ apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls)) {
   }
   output
 }
-proc.time()
+
+ptm <- proc.time()
 # Deploy scraper on all store pages
 store_details_lf <- vector(mode='list', length(store_links_leafly))
-for (store_url in seq_along(store_links_leafly)) {
-  # webpage <- read_html_safely(store_links_leafly[store_url])
-  # store_details_lf[[store_url]] <- scrape_leafly_page(webpage)
+for (store_url in 1:length(store_links_leafly)) {
+  webpage <- read_html_safely(as.character(store_links_leafly[store_url]))
+  store_details_lf[[store_url]] <- scrape_leafly_page(webpage)
   for (colnames in names(store_details_lf[[store_url]])) {
     store_details_lf[[store_url]][[colnames]] <- ifelse(
       length(store_details_lf[[store_url]][[colnames]]) != 0, 
       store_details_lf[[store_url]][[colnames]], NA)
   }
 }
+proc.time() - ptm
 
-# Reshape to dataframe
+
+# Reshape to dataframe ----------------------------------------------------
+
 stores_lf <- do.call(rbind, lapply(store_details_lf, data.frame))
 container <- list()
 for (store_url in seq_along(store_details_lf)) {
   # Make a new list, one entry has a dataframe each
   container[[store_url]] <- data.frame(store_details_lf[store_url])
 }
+
 stores_lf_df <- bind_rows(container)
+
 # Add URL
 stores_lf_df <- stores_lf_df %>% 
-  mutate(url = store_links_leafly$x)
+  mutate(url = store_links_leafly)
+
 # Export / Save
 write.csv(stores_lf_df, "data/leafly_stores.csv")
-proc.time()
 
-
-
-
-# Text from old leafly script ---------------------------------------------
-
-
-leafly_urls_df <- leafly_scrape$results %>% 
-  reduce(dplyr::bind_rows) %>% 
-  mutate(
-    joined_date = as.Date(joined_date, "%m/%d/%Y"),
-    recent_review_date = as.Date(recent_review_date, "%Y-%m-%d"),
-    menu_updated_date = as.Date(menu_updated_date, "%m/%d/%Y"))
-
-
-# Loop through again to get more info that you missed, just for OR stores.
-# You want: title, number of reviews.
-leafly_or <- leafly_urls_df %>% rowwise() %>%
-  mutate(page_body = possibly(~.x %>% read_html() %>% html_nodes("body"), NA)(url),
-         page_head = possibly(~.x %>% read_html() %>% html_nodes("head"), NA)(url),
-         name = possibly(~.x %>% html_node("h1[itemprop=name]") %>% html_text(), NA)(page_body),
-         num_reviews = possibly(~.x %>% 
-                                  html_node('header.heading--article:contains("Recent Reviews") > a') %>%
-                                  html_text() %>%
-                                  str_extract_all("[0-9]+"), NA)(page_body))
-
-# saveRDS(leafly_or, "leafly oregon.Rds")
-
-# We can see that most datasets have stores mostly opening post-2014
-leafly_or %>% ggplot(aes(x=joined_date)) + geom_histogram()
-wm_scrape_df %>% ggplot(aes(x=membersince)) + geom_histogram()
-
-# Individually look at places that opened pre-2014?
-leafly_or %>% ggplot(aes(x=joined_date, y= menu_updated_date)) + geom_point()
-leafly_or %>% ggplot(aes(x=recent_review_date, y= menu_updated_date)) + geom_point()
+beepr::beep(5)
 
