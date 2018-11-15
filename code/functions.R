@@ -89,8 +89,8 @@ scrape_leafly_page <- function(page) {
       
       # Get "types" of store
       store_info_tags <- page %>% html_nodes(".container ul li") %>% html_text()
-      is_med <- any(str_detect(store_info_tags, "Medical"))
-      is_rec <- any(str_detect(store_info_tags, "Recreational"))
+      is_med <- any(str_detect(store_info_tags, "(18 years)|(18\\+)|(recommendation)"))
+      is_rec <- any(str_detect(store_info_tags, "(21\\+)"))
       is_delivery <- any(str_detect(store_info_tags, "Delivery"))
       
       # Get long text of store information
@@ -219,24 +219,31 @@ apply_scrape_to_leafly_urls <- function(urls, range=1:length(urls), delay = .5) 
 
 # Write function that extracts store links from a city index page (Weedmaps)
 # It collects medical and rec stores by default, or can be set to rec only
-get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = FALSE, delay = 1) {
+get_city_store_links <- function(city_index_url, 
+                                 rec_only = FALSE, 
+                                 med_only = FALSE,
+                                 screenshot = FALSE, 
+                                 delay = 1) {
   
   # Grab all unique dispensary URLs in sidebar
   remDr$navigate(city_index_url) # Get Page Source
   Sys.sleep(delay)
-  remDr$screenshot(display = screenshot)
+  # remDr$screenshot(display = screenshot)
   
   # If looking for recreational only, then click the rec button.
   # This will mean only rec stores are collected.
   if (rec_only) {
-    # Click filter screen
-    remDr$findElement("css", "#filters-modal-button.wm-filter-button")$clickElement()
+    # Click "medical" once to toggle it off
+    remDr$findElement("css", "#license-medical-filter-button")$clickElement()
     Sys.sleep(delay)
-    # Click on the medical toggle button (this will turn medical off)
-    remDr$findElement("css", "div.wm-filter-modal-toggle-control span")$clickElement()
+    remDr$screenshot(display = screenshot)
+  }
+  
+  if (med_only) {
+    # Click "recreational" once to toggle it off
+    remDr$findElement("css", "#license-rec-filter-button")$clickElement()
     Sys.sleep(delay)
-    # Click on the "okay" ("See n Results") Button to keep changes
-    remDr$findElement("css", "ion-footer-bar span")$clickElement()
+    remDr$screenshot(display = screenshot)
   }
   
   # Extract store links (sometimes produces 0-length output, if no stores there)
@@ -252,64 +259,179 @@ get_city_store_links <- function(city_index_url, rec_only = FALSE, screenshot = 
 
 
 # Write function that extracts key info from store page (Weedmaps)
-get_store_details_wm <- function(store_url) {
+get_store_details_wm <- function(store_url, delay = 1) {
   
   html_page <- read_html_safely(store_url)
   
-  # Grab fields from the "Details" page.
+  header_info <-
+    html_page %>% html_node("body") %>% 
+    html_nodes("span#collapsible-description") %>%
+    html_text()
+    
+  store_info <- html_page %>% html_node("body") %>% 
+    html_nodes("div#collapsible-container") #div.sc-ifAKCX")
+  
+  phone <-
+    store_info %>% html_text() %>%
+    str_extract("\\(?[0-9]{3}\\)? ?-?[0-9]{3}-?[0-9]{4}")
+  
+  hours <- html_page %>% html_node("body") %>% html_text() %>%
+    str_extract("mon.+?sun.+?[(hours)([ap]m)]")
+  
+  name <- html_page %>% html_node("h1") %>% html_text()
+  
+  email <- 
+    html_page %>% html_node("body") %>% html_text() %>%
+    str_extract("Email.+?@.[A-Za-z0-9]*") %>%
+      # str_replace("Facebook", "") %>%
+      str_replace("Email", "")
+  
+  address <-
+    html_page %>% html_node("body") %>% html_text() %>%
+    str_extract("Address.+?[0-9]{5}") %>%
+    str_replace("Address:? ?", "") 
+  
+  licenseIDs <-
+    html_page %>% html_node("body") %>% html_text() %>%
+    str_extract_all("[AM]-?[0-9]{2}-[0-9]{2}-[0-9]{7}-[0-9A-Za-z]{4}") %>% unlist %>%  unique %>% str_c(collapse=" ")
+  
+  
+  
+  about_us <-
+    html_page %>% 
+      html_text()  %>% 
+        str_extract_all("About Us.+?Hours Of Operation") %>% unlist %>%  
+      str_replace("About Us", "") %>%
+      str_replace("Hours Of Operation", "")
+    
+  member_since <- html_page %>% 
+    html_text() %>%
+    str_extract_all("Member Since[0-9]{4}") %>% unlist %>%  
+    str_replace("Member Since", "") 
+  
+  
+  # facebook <-
+  # html_page %>% 
+  #   # html_nodes(".haaqWK")
+  #   html_text() %>%
+  #   str_extract_all("Facebook.+?/.*") %>% unlist %>%  
+  #   str_replace("Facebook", "") 
+  
+  name <- html_page %>%
+    html_node("div h1") %>%
+    html_text()
+  
   url <- store_url
-  state <- html_page %>% html_node("body") %>% html_nodes("[itemprop=addressRegion]") %>% html_text()
-  licenses <- html_page %>% html_node("body") %>% html_nodes("div .details-licenses") %>% html_text() %>% 
-    str_c(collapse=" ")
-  name <- html_page %>% html_nodes(".listing-subtitle") %>% html_text() %>% head(1)
-  address <- html_page %>% html_nodes("[itemprop=streetAddress]") %>% html_text()
-  city <- html_page %>% html_nodes("[itemprop=addressLocality]") %>% html_text()
-  ZIP <- html_page %>% html_nodes("[itemprop=postalCode]") %>% html_text()
-  phone <- html_page %>% html_nodes("[itemprop=telephone]") %>% html_text() %>% head(1)
-  phone2 <- html_page %>% html_nodes("[itemprop=telephone]") %>% html_text() %>% head(2) %>% tail(1)
-  email <- html_page %>% html_nodes("[itemprop=email]") %>% html_text() %>% head(1)
-  email2 <- html_page %>% html_nodes("[itemprop=email]") %>% html_text() %>% head(2) %>% tail(1)
-  membersince <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>%
-    str_subset("Member Since") %>% str_replace_all("Member Since", "") %>%
-    str_replace_all("(rd)?(nd)?(st)?(th)?,?", "") %>% as.Date("%b %d %Y")
-  # convert membersince to a date.
-  hits <- html_page %>% html_nodes("div .listing-hits-number") %>% html_text() %>%
-    str_replace_all(",", "") %>% as.numeric
-  twitter <- html_page %>% html_nodes("div .social-links #twitter") %>% html_text()
-  instagram <- html_page %>% html_nodes("div .social-links #instagram") %>% html_text()
-  facebook <- html_page %>% html_nodes("div .social-links #facebook") %>% html_text()
-  website <- html_page %>% html_nodes("div .social-links") %>% html_text() %>%
-    str_extract_all("www.*") %>% unlist
-  reviews <- html_page %>% html_nodes("div .listing-reviews-number") %>% html_text() %>%
-    str_replace_all(",", "") %>% as.numeric
-  description <- html_page %>% html_nodes("div .details-body") %>% html_text() %>% str_c(collapse = "<break>")
-  hours <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>% str_subset("Sunday")
-  age18 <- html_page %>% html_nodes("div.icon_age_18")
-  age21 <- html_page %>% html_nodes("div.icon_age_21")
-  min_age <- case_when(length(age18) != 0 ~ "18+",
-                       length(age21) != 0 ~ "21+")
+  
+  # member_since <- html_page %>% 
+  #   html_text() %>%
+  #   str_extract_all("Member Since[0-9]{4}") %>% unlist %>%  
+  #   str_replace("Member Since", "") 
+  # 
+  # member_since <- html_page %>% 
+  #   html_text() %>%
+  #   str_extract_all("Member Since[0-9]{4}") %>% unlist %>%  
+  #   str_replace("Member Since", "") 
+  # 
+  # ###
+  
+  
+  # html_page %>% 
+  #   html_text() %>%
+  #   str_extract_all("Member Since[0-9]{4}") %>% unlist %>%  
+  #   str_replace("Member Since", "") 
+  
+  
+  
+  # Grab fields from the "Details" page.
+  # state <- html_page %>% html_node("body") %>% html_nodes("[itemprop=addressRegion]") %>% html_text()
+  # licenses <- html_page %>% html_node("body") %>% html_nodes("div .details-licenses") %>% html_text() %>% 
+  #   str_c(collapse=" ")
+  # name <- html_page %>% html_nodes(".listing-subtitle") %>% html_text() %>% head(1)
+  # address <- html_page %>% html_nodes("[itemprop=streetAddress]") %>% html_text()
+  # city <- html_page %>% html_nodes("[itemprop=addressLocality]") %>% html_text()
+  # ZIP <- html_page %>% html_nodes("[itemprop=postalCode]") %>% html_text()
+  # phone <- html_page %>% html_nodes("[itemprop=telephone]") %>% html_text() %>% head(1)
+  # phone2 <- html_page %>% html_nodes("[itemprop=telephone]") %>% html_text() %>% head(2) %>% tail(1)
+  # email <- html_page %>% html_nodes("[itemprop=email]") %>% html_text() %>% head(1)
+  # email2 <- html_page %>% html_nodes("[itemprop=email]") %>% html_text() %>% head(2) %>% tail(1)
+  # membersince <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>%
+  #   str_subset("Member Since") %>% str_replace_all("Member Since", "") %>%
+  #   str_replace_all("(rd)?(nd)?(st)?(th)?,?", "") %>% as.Date("%b %d %Y")
+  # # convert membersince to a date.
+  # hits <- html_page %>% html_nodes("div .listing-hits-number") %>% html_text() %>%
+  #   str_replace_all(",", "") %>% as.numeric
+  # twitter <- html_page %>% html_nodes("div .social-links #twitter") %>% html_text()
+  # instagram <- html_page %>% html_nodes("div .social-links #instagram") %>% html_text()
+  # facebook <- html_page %>% html_nodes("div .social-links #facebook") %>% html_text()
+  # website <- html_page %>% html_nodes("div .social-links") %>% html_text() %>%
+  #   str_extract_all("www.*") %>% unlist
+  # reviews <- html_page %>% html_nodes("div .listing-reviews-number") %>% html_text() %>%
+  #   str_replace_all(",", "") %>% as.numeric
+  # description <- html_page %>% html_nodes("div .details-body") %>% html_text() %>% str_c(collapse = "<break>")
+  # hours <- html_page %>% html_nodes("div .details-card-items") %>% html_text() %>% str_subset("Sunday")
+  # age18 <- html_page %>% html_nodes("div.icon_age_18")
+  # age21 <- html_page %>% html_nodes("div.icon_age_21")
+  # min_age <- case_when(length(age18) != 0 ~ "18+",
+  #                      length(age21) != 0 ~ "21+")
   
   # Grab fields from the "reviews" page
-  review_url <- str_replace(store_url, "#/details", "#/reviews")
-  review_page <- read_html_safely(review_url)
-  # Grab latest review date
-  latest_review_date <- review_page %>% 
-    html_nodes(".created-at .timeago_standard_date") %>% 
-    html_attr("title")
-  # In case no dates, and we've found a null object, fill w NA
-  if(is.null(latest_review_date)) latest_review_date <- NA 
-  latest_review_date <- as.Date(latest_review_date) %>%
-    max # get latest date
-  
+  # review_url <- str_replace(store_url, "/about", "#/reviews")
+  # review_page <- read_html_safely(review_url)
+  # # Grab latest review date
+  # latest_review_date <- review_page %>% 
+  #   html_nodes(".created-at .timeago_standard_date") %>% 
+  #   html_attr("title")
+  # # In case no dates, and we've found a null object, fill w NA
+  # if(is.null(latest_review_date)) latest_review_date <- NA 
+  # latest_review_date <- as.Date(latest_review_date) %>%
+  #   max # get latest date
+  # 
   # Format the output.
-  features <- c('state', 'name', 'address', 'city', 'ZIP', 'phone', 'phone2', 
-                'email', 'email2', 'membersince','hits', 'twitter', 'instagram', 
-                'facebook', 'website', 'reviews', 'description', 'hours', "url",
-                "licenses",
-                'latest_review_date', 'min_age')
-  out <- list(state, name, address, city, ZIP, phone, phone2, email, email2, membersince,
-              hits, twitter, instagram, facebook, website, reviews, description, hours, url, licenses,
-              latest_review_date, min_age)
+  
+  avg_rating <- html_page %>% html_text() %>% 
+    str_extract("[0-9.]* stars") %>%
+    str_extract("[0-9.]*")
+  
+  reviews <- html_page %>% html_text() %>% 
+    str_extract("stars by [0-9]* reviews") %>%
+    str_extract("[0-9]+")
+  
+  
+  ######### Reviews ####
+  remDr$navigate(str_replace(store_url, "about", "reviews")) # load page;
+  Sys.sleep(delay) # wait to load
+  remDr$screenshot(T)
+  review_page <- read_html_safely(remDr$getPageSource() %>% unlist) 
+  
+  ######### Menu ####
+  remDr$navigate(str_replace(store_url, "about", "menu")) # load page;
+  Sys.sleep(delay) # wait to load
+  remDr$screenshot(T)
+  menu_page <- read_html_safely(remDr$getPageSource() %>% unlist) 
+  
+  
+  menu_update_date <- 
+    menu_page %>%
+    html_nodes('span') %>%
+    html_text() %>%
+    str_subset("(?i)updated .* ago") %>%
+    head(1) %>%
+    str_replace_all("Updated ?", "")
+  
+  
+  features <- c("name", "url",
+                "phone", "hours", "email", "address", "licenseIDs", 
+                "about_us", "member_since", 'menu_update_date',
+                "avg_rating", "reviews"
+                )
+  
+  out <- list(name, url,
+              phone, hours, email, address, licenseIDs, 
+              about_us, member_since, menu_update_date,
+              avg_rating, reviews)
+  
+  
   names(out) = features
   
   # Testing.

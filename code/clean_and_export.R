@@ -5,77 +5,84 @@ source("code/functions.R")
 # ... Identify medical v recreational stores 
 # ... Look for license number?
 
- 
 
-# Leafly ------------------------------------------------------------------
-# Load, identify stores removed BC unlicensed
-lf <- read.csv("data/leafly_stores.csv") %>% 
-  select(-X) %>%
-  mutate(rmvd_unlicensed =  !is_med & !is_rec & is.na(city),
-         name = as.character(name),
-         name = str_replace_all(name, "[\n]", ""),
-         name = str_replace_all(name, " {2,}", " "),
-         name = str_replace_all(name, "^ *", ""),
-         name = str_replace_all(name, "Home Dispensaries", ""),
-         type = case_when(is_med & is_rec ~ "Rec/Med",
+# Prep --------------------------------------------------------------------
+
+lf <- read.csv("data/leafly_stores_nov42018.csv") %>% select(-X)
+
+# Parse hours of the day
+lf <- lf %>%
+  mutate(hours_m = str_extract(hours, "Monday.*Tuesday") %>% str_replace("Monday", "") %>% str_replace("Tuesday", ""),
+         hours_t = str_extract(hours, "Tuesday.*Wednesday") %>% str_replace("Tuesday", "") %>% str_replace("Wednesday", ""),
+         hours_w = str_extract(hours, "Wednesday.*Thursday") %>% str_replace("Wednesday", "") %>% str_replace("Thursday", ""),
+         hours_r = str_extract(hours, "Thursday.*Friday") %>% str_replace("Thursday", "") %>% str_replace("Friday", ""),
+         hours_f = str_extract(hours, "Friday.*Saturday") %>% str_replace("Friday", "") %>% str_replace("Saturday", ""),
+         hours_sa = str_extract(hours, "Saturday.*Sunday") %>% str_replace("Saturday", "") %>% str_replace("Sunday", ""),
+         hours_su = str_extract(hours, "Sunday.*[(AM)(PM)(hours)]")  %>% str_replace("Sunday", "") %>% str_replace("(hours)|(am)|(pm)", "")) %>% 
+  # Add state
+  mutate(state = str_extract(address, "[A-Za-z]*$") %>% toupper(),
+         city = str_extract_all(address, "[A-Za-z]*, [A-Za-z]*") %>% str_extract("[A-Za-z]*")) %>% 
+  # Add "storefront" tag
+  mutate(is_storefront = str_detect(store_info_tags, "Storefront"),
+         
+         # Clean name
+         name = as.character(name) %>% str_replace_all("[\n]", "") %>% str_replace_all(" {2,}", " ") %>% str_replace_all("^ *", ""),
+         name = str_replace_all(name, " - .*", "") %>% str_replace_all("Home Dispensaries", ""))
+
+# get imputed license type.
+lf <- lf %>% 
+  mutate(type = case_when(is_med & is_rec ~ "Rec/Med",
                           is_med & !is_rec ~ "Med",
                           !is_med & is_rec ~ "Rec",
-                          rmvd_unlicensed & !is_med & !is_rec ~ "Removed", # 13 have page down
                           # There are 3 "No Type" cases: 2 delivery; 1 unlabeled
                           !is_med & !is_rec ~ "Unclear"),
-         med_license = str_extract_all(about, "M[0-9]{2}[0-9\\-A-Za-z]{6,}"),
-         rec_license = str_extract_all(about, "A[0-9]{2}[0-9\\-A-Za-z]{6,}"),
-         shows_med_license = str_detect(about, "M[0-9]{2}[0-9\\-A-Za-z]{6,}"),
-         shows_rec_license = str_detect(about, "A[0-9]{2}[0-9\\-A-Za-z]{6,}"),
+         med_license = str_extract_all(info_text, "M[0-9]{2}[0-9\\-A-Za-z]{6,}"),
+         rec_license = str_extract_all(info_text, "A[0-9]{2}[0-9\\-A-Za-z]{6,}"),
+         shows_med_license = str_detect(info_text, "M[0-9]{2}[0-9\\-A-Za-z]{6,}"),
+         shows_rec_license = str_detect(info_text, "A[0-9]{2}[0-9\\-A-Za-z]{6,}"), 
          license_types_shown = case_when(shows_med_license & shows_rec_license ~ "Rec/Med",
                                          shows_med_license & !shows_rec_license ~ "Med",
-                                      !shows_med_license & shows_rec_license ~ "Rec",
-                                      !shows_med_license & !shows_rec_license ~ "Neither"),
+                                         !shows_med_license & shows_rec_license ~ "Rec",
+                                         !shows_med_license & !shows_rec_license ~ "Neither"),
          type_imputed = case_when(license_types_shown == "Rec/Med" | type == "Rec/Med" ~ "Rec/Med",
                                   license_types_shown == "Rec" & type == "Med" ~ "Rec/Med",
                                   license_types_shown == "Med" & type == "Rec" ~ "Rec/Med",
                                   license_types_shown == "Med" | type == "Med" ~ "Med", # either has med -> med
                                   license_types_shown == "Rec" | type == "Rec" ~ "Rec", # either has rec -> rec
-                                  type == "Removed" ~ "Removed"))
+                                  TRUE ~ "Unclear"),
+         
+         delivery = case_when(is_delivery & is_storefront ~ "Storefront + Delivery",
+                                      !is_delivery & is_storefront ~ "Storefront Only",
+                                      is_delivery & !is_storefront ~ "Delivery Only",
+                                      TRUE ~ "Unclear")
+         ) %>%
+  select(-shows_med_license,
+         -shows_rec_license,
+         -license_types_shown,
+         -is_delivery,
+         -is_storefront,
+         -type) %>%
+  rename(type=type_imputed)
 
-# Validate the store type data.
-table(lf$license_types_shown, lf$type) # Confusion matrix for two license type approaches
-table(lf$type_imputed) # Licenses by best guess @ type
-
-#TODO: Add columns for medical/adult-use license IDs
-
-
+# Miscellaneous
 lf <- lf %>% 
-  mutate(recent_review_date = as.Date(recent_review_date),
-         address = as.character(address)) %>%
+  mutate(recent_review_date = as.Date(recent_review_date)) %>%
   rowwise %>%
   mutate(med_license = ifelse(is.null(med_license), NA, med_license),
-         rec_license = ifelse(is.null(rec_license), NA, rec_license),
-         last_active = max(recent_review_date, menu_updated_date)) %>%
-  ungroup %>%
-  mutate(days_inactive = max(last_active, na.rm=T) - last_active,
-         address = ifelse(nchar(address) < 5 | is.na(address), "Call for address", address),
-         address = tools::toTitleCase(tolower(address))
-  )
+         rec_license = ifelse(is.null(rec_license), NA, rec_license))
 
-lf <- lf %>%
-  select(Name = name, URL=url, City=city, Address=address, Phone=phone,
-         Days_Inactive=days_inactive, Joined=joined_date, 
-         Menu_Updated = menu_updated_date, 
-         Recent_Review_Date = recent_review_date,
-         Type=type,
-         About=about, Web=web,
-         Med_License=med_license,
-         Rec_License=rec_license,
-         type, 
-         is_licensed, is_med, is_rec, rmvd_unlicensed, 
-         type_imputed,
-         Recent_Review = recent_review_content)
+# Export with final coluns
+lf_clean <- lf %>%
+  select(name, url, type, delivery, state, city, address, phone, email, website,
+         joined_year = joined_date, recent_review_date, rating, hours_m:hours_su, About = info_text
+         
+  ) 
 
 
-lf %>% 
+lf_clean %>% 
   mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower) %>%
-  write.csv("output/Leafly_cleaned.csv")
+  `colnames<-`(tools::toTitleCase(colnames(.))) %>%
+  write.csv("output/Leafly_cleaned_nov152018.csv")
 
 
 
