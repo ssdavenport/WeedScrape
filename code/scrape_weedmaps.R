@@ -164,12 +164,12 @@ for (i in 1:length(wm_links_type$url)) {
                                       error = function (e) data.frame(url=wm_links_type$url[[i]]))
   if (i %%10 == 0) print(i)
 }
-
+i <- 1038
 # Restore to data-frame, add on URL info
 stores_wm <- lapply(store_details_list, data.frame) %>% 
   bind_rows() %>% 
   full_join(wm_links_type)
-
+stores_wm %>% tail(30)
 
 # Export for cleaning
 write.csv(stores_wm, "data/store_details_wm_nov15.csv"); beepr::beep(5)

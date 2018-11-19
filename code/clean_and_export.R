@@ -6,9 +6,14 @@ source("code/functions.R")
 # ... Look for license number?
 
 
-# Prep --------------------------------------------------------------------
 
-lf <- read.csv("data/leafly_stores_nov42018.csv") %>% select(-X)
+# Leafly ------------------------------------------------------------------
+
+lf <- read.csv("data/leafly_stores_nov152018.csv") %>% select(-X)
+lf16 <- read.csv("data/leafly_stores_nov162018.csv") %>% select(-X)
+
+lf <- bind_rows(list(lf, lf16)) %>% unique
+
 
 # Parse hours of the day
 lf <- lf %>%
@@ -29,9 +34,12 @@ lf <- lf %>%
          name = as.character(name) %>% str_replace_all("[\n]", "") %>% str_replace_all(" {2,}", " ") %>% str_replace_all("^ *", ""),
          name = str_replace_all(name, " - .*", "") %>% str_replace_all("Home Dispensaries", ""))
 
+# lf[35, ]
 # get imputed license type.
 lf <- lf %>% 
-  mutate(type = case_when(is_med & is_rec ~ "Rec/Med",
+  mutate(is_med = str_detect(store_info_tags, "Medical"),
+         is_rec = str_detect(store_info_tags, "Recreational"),
+         type = case_when(is_med & is_rec ~ "Rec/Med",
                           is_med & !is_rec ~ "Med",
                           !is_med & is_rec ~ "Rec",
                           # There are 3 "No Type" cases: 2 delivery; 1 unlabeled
@@ -74,75 +82,74 @@ lf <- lf %>%
 # Export with final coluns
 lf_clean <- lf %>%
   select(name, url, type, delivery, state, city, address, phone, email, website,
-         joined_year = joined_date, recent_review_date, rating, hours_m:hours_su, About = info_text
-         
-  ) 
-
-
-lf_clean %>% 
+         joined_year = joined_date, recent_review_date, rating, hours_m:hours_su, About = info_text)  %>% 
   mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower) %>%
-  `colnames<-`(tools::toTitleCase(colnames(.))) %>%
-  write.csv("output/Leafly_cleaned_nov152018.csv")
+  `colnames<-`(tools::toTitleCase(colnames(.)))
 
+table(lf_clean$Type)
+# Export
+lf_clean %>% write.csv("output/Leafly_cleaned_nov16_2018.csv")
 
+lf_clean15 <-  read.csv("output/Leafly_cleaned_nov152018.csv") %>% 
+  select(-X) %>%
+  mutate(Recent_review_date = as.Date(as.character(Recent_review_date)))
+
+lf_clean17 <- bind_rows(list(lf_clean,
+               lf_clean15[!lf_clean15$Name %in% lf_clean$Name, ])) 
+
+lf_clean17 %>% write.csv("output/Leafly_cleaned_nov15final_2018.csv")
+
+ 
 
 # WeedMaps ----------------------------------------------------------------
+stores_wm <- read.csv("data/store_details_wm_nov15.csv") %>% select(-X)#; beepr::beep(5)
 
 # Load Data
 LAZIPs <- read.csv("data/LACountyZIPs.csv")[, 2] # ZIPs
-wm_r <- read.csv("data/store_details_wm_rec.csv") %>% select(-X) #%>%
-wm_all <- read.csv("data/store_details_wm.csv") %>% select(-X) #%>%
-# Check if there are any rec stores that did not appear in med/rec search
-any(!(wm_r$url %in% wm_all$url)) # any left out? should resolve to FALSE
-# Get a list of ALL the urls (med or rec), and tag them acc'g to group
-wm_urls <- unique(c(as.character(wm_r$url), as.character(wm_all$url)))
-# Starting w URLs, identify by type, then add on details from scrape.
-wm_stores <- tibble(url=wm_urls) %>% 
-  mutate(type = ifelse(url %in% wm_r$url, "Rec or Med/Rec only",
-                       ifelse(url %in% wm_all$url, "Med Only", "Unknown"))) %>%
-  left_join(wm_all) %>% 
-  # Detect if ZIP is in LA County, extract med/rec license #  
-  mutate(LACounty_ZIP = ZIP %in% LAZIPs,
-         med_license = str_extract(description, "M[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"),
-         rec_license = str_extract(description, "A[0-9]{2}\\-[0-9]{2}\\-[0-9]{7}(\\-TEMP)?"),
-         latest_review_date = as.Date(latest_review_date))
-# Diagnose
-sapply(wm_stores, function(x) mean(is.na(x)))
-wm_stores %>% filter(LACounty_ZIP) %>% .$type %>% table
-wm_stores %>% filter(LACounty_ZIP) %>% .$med_license %>% unlist %>% table
-wm_stores %>% filter(LACounty_ZIP) %>% .$rec_license %>% unlist %>% table
 
-
-wm_stores <- wm_stores %>% 
-  mutate(days_inactive= max(as.Date(latest_review_date), na.rm=T) - as.Date(latest_review_date),
+# Add ZIP (works for almost all)
+stores_wm <- stores_wm %>%
+  mutate(zip = str_extract(address, "9[0-9]{4}") %>% as.numeric,
+         LACounty_ZIP = zip %in% LAZIPs,
          address = as.character(address),
          address = ifelse(nchar(address) < 5 | is.na(address), "Call for Address", address),
-         address = tools::toTitleCase(tolower(address))) %>%
-  select(Name=name, Address=address, City=city, ZIP, 
-         LACounty=LACounty_ZIP,
-         Phone=phone, Email=email,
-         Days_Inactive=days_inactive, Joined=membersince,
-         Reviews=reviews,
-         Min_Age = min_age,
-         Med_License=med_license, Rec_License=rec_license,
-         Twitter=twitter, IG=instagram, FB=facebook, Website=website,
-         Phone2=phone2, Email2=email2, Hits=hits,
-         About=description) 
+         address = tools::toTitleCase(tolower(address)),
+         type = case_when(med & rec ~ "Med/Rec",
+                          med ~ "Med Only",
+                          rec ~ "Rec Only",
+                          TRUE ~ "Missing Info"),
+         about_us = tolower(about_us)) %>%
+  
+  # Add hours
+  mutate(hours_m = str_extract(hours, "mon.*tue") %>% str_replace("mon", "") %>% str_replace("tue", ""),
+         hours_t = str_extract(hours, "tue.*wed") %>% str_replace("tue", "") %>% str_replace("wed", ""),
+         hours_w = str_extract(hours, "wed.*thurs") %>% str_replace("wed", "") %>% str_replace("thurs", ""),
+         hours_r = str_extract(hours, "thurs.*fri") %>% str_replace("thurs", "") %>% str_replace("fri", ""),
+         hours_f = str_extract(hours, "fri.*sat") %>% str_replace("fri", "") %>% str_replace("sat", ""),
+         hours_sa = str_extract(hours, "sat.*sun") %>% str_replace("sat", "") %>% str_replace("sun", ""),
+         hours_su = str_extract(hours, "sun.*[(am)(pm)(hours)]")  %>% str_replace("sun", "") %>% str_replace("(hours)|(am)|(pm)", "")) %>% 
+  # Add state
+  mutate(state = str_extract(address, "[A-Za-z]*$") %>% toupper(),
+         city = str_extract_all(address, "[A-Za-z]*, [A-Za-z]*") %>% str_extract("[A-Za-z]*")) %>%
+  mutate(city = str_replace(city, "^(?i)drive|ave|blvd|circle|address|street|rd|parkway|way|road|harbor|walk|place|st|hwy", ""))
 
+# Diagnose
+table(is.na(stores_wm$zip)) # all but about ~15 have ZIPs
+table(stores_wm$LACounty_ZIP) # 557 in LACounty
 
-wm_stores <- wm_stores %>% 
-  mutate(About = str_replace_all(About, "[\r\n\t]+", " ") %>% tolower,
-         About = str_replace_all(About, "<break>", " "),
-         About = iconv(About, to = "ASCII//TRANSLIT"), 
-         Name = iconv(Name, to = "ASCII//TRANSLIT"), 
-         About = ifelse(nchar(About) < 5 | is.na(About), " ", About),
-         Med = str_detect(About, "(?i)medical"),
-         Rec = str_detect(About, "(?i)recreational") | 
-           str_detect(About, "(?i)adult[\\- ]use"))
+table(stores_wm$type)
 
+table(stores_wm$LACounty_ZIP, stores_wm$type) # 557 in LACounty
+# sum(is.na(stores_wm$LACounty_ZIP))
+
+stores_wm_clean <- stores_wm %>%
+  select(name, url, type, state, city, address, phone, email,
+       joined_year = member_since, 
+       menu_update_date, avg_rating, reviews, hours_m:hours_su, about_us, licenseIDs) %>%
+  `colnames<-`(tools::toTitleCase(colnames(.)))
 
 # Save/Export
-write.csv(wm_stores, "output/Weedmaps_cleaned.csv")
+# write.csv(stores_wm_clean, "output/Weedmaps_cleaned_nov152018.csv")
 
          
 # NOTE: Try to find date of most recent review?
